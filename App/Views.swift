@@ -1,5 +1,4 @@
 import SwiftUI
-import Charts
 import UIKit
 
 // MARK: - Bausteine
@@ -9,8 +8,8 @@ struct CardStyle: ViewModifier {
         content
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .background(Theme.card)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
     }
 }
 
@@ -34,6 +33,22 @@ struct PrimaryButton: View {
     }
 }
 
+struct SecondaryButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+    }
+}
+
 struct Pill: View {
     let text: String
     var body: some View {
@@ -41,7 +56,7 @@ struct Pill: View {
             .font(.footnote.weight(.semibold))
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(Color(.tertiarySystemFill))
+            .background(Theme.field)
             .clipShape(Capsule())
     }
 }
@@ -49,13 +64,13 @@ struct Pill: View {
 struct RxList: View {
     let key: String
     let week: Int
-    let compact: Bool
+    let opts: Opts
 
     var body: some View {
-        let ids = Plan.exercises(key: key, week: week, compact: compact)
+        let ids = Plan.exercises(key: key, week: week, opts: opts)
         VStack(spacing: 0) {
             ForEach(ids, id: \.self) { id in
-                if let x = Catalog.ex[id], let r = Plan.rx(id, week: week, compact: compact) {
+                if let x = Catalog.ex[id], let r = Plan.anyRx(id, week: week, opts: opts) {
                     VStack(spacing: 0) {
                         HStack {
                             Text(x.name)
@@ -73,17 +88,95 @@ struct RxList: View {
     }
 }
 
+struct DayChips: View {
+    @EnvironmentObject var store: Store
+    private let order: [Int] = [2, 3, 4, 5, 6, 7, 1]
+    private let names: [String] = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(0..<7, id: \.self) { i in
+                    chip(i)
+                }
+            }
+            Text("\(store.data.days.count) Einheit\(store.data.days.count == 1 ? "" : "en") pro Woche. Wähle 1 bis 5 Tage.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    func chip(_ i: Int) -> some View {
+        let d = order[i]
+        let on = store.data.days.contains(d)
+        return Text(names[i])
+            .font(.subheadline.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .frame(height: 42)
+            .background(on ? Theme.accent : Theme.field)
+            .foregroundStyle(on ? Color.white : Color.primary)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .onTapGesture { toggle(d) }
+            .accessibilityAddTraits(.isButton)
+    }
+
+    func toggle(_ d: Int) {
+        if let idx = store.data.days.firstIndex(of: d) {
+            if store.data.days.count > 1 { store.data.days.remove(at: idx) }
+        } else if store.data.days.count < 5 {
+            store.data.days.append(d)
+        }
+    }
+}
+
 // MARK: - Tabs
 
 struct ContentView: View {
+    @EnvironmentObject var store: Store
+    @State private var tab = 0
+
     var body: some View {
-        TabView {
-            HomeView().tabItem { Label("Heute", systemImage: "house.fill") }
-            PlanView().tabItem { Label("Plan", systemImage: "calendar") }
-            JumpView().tabItem { Label("Sprung", systemImage: "chart.line.uptrend.xyaxis") }
-            ExercisesView().tabItem { Label("Übungen", systemImage: "dumbbell.fill") }
-            SettingsView().tabItem { Label("Optionen", systemImage: "gearshape.fill") }
+        let d = store.data
+        let _ = Theme.apply(accentHex: d.accentHex, bgStyle: d.bgStyle, radius: d.radius)
+        let themeKey = "\(d.accentHex)-\(d.bgStyle)-\(d.radius)-\(d.fontDesign)"
+        TabView(selection: $tab) {
+            HomeView().tabItem { Label("Heute", systemImage: "house.fill") }.tag(0)
+            PlanView().tabItem { Label("Plan", systemImage: "calendar") }.tag(1)
+            ProgressTab().tabItem { Label("Fortschritt", systemImage: "chart.line.uptrend.xyaxis") }.tag(2)
+            ExercisesView().tabItem { Label("Übungen", systemImage: "dumbbell.fill") }.tag(3)
+            SettingsView().tabItem { Label("Profil", systemImage: "person.crop.circle") }.tag(4)
         }
+        .id(themeKey)
+        .tint(Theme.accent)
+        .fontDesign(design)
+        .dynamicTypeSize(typeSize)
+        .preferredColorScheme(scheme)
+        .fullScreenCover(isPresented: Binding(get: { !store.data.onboarded }, set: { _ in })) {
+            OnboardingView()
+                .environmentObject(store)
+                .tint(Theme.accent)
+                .preferredColorScheme(scheme)
+        }
+        .sheet(item: $store.summary) { s in
+            SummarySheet(s: s)
+                .presentationDetents([.medium, .large])
+        }
+    }
+
+    var scheme: ColorScheme { store.data.bgStyle == 3 ? .dark : .light }
+
+    var design: Font.Design {
+        switch store.data.fontDesign {
+        case 1: return .rounded
+        case 2: return .serif
+        case 3: return .monospaced
+        default: return .default
+        }
+    }
+
+    var typeSize: DynamicTypeSize {
+        let all: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge]
+        return all[min(max(store.data.textSize, 0), all.count - 1)]
     }
 }
 
@@ -105,15 +198,17 @@ struct HomeView: View {
 
 struct Overview: View {
     @EnvironmentObject var store: Store
+    @State private var showJump = false
 
     var body: some View {
         let s = store.data.summary()
         let title: String = s.done >= s.planned ? "Woche geschafft" : (s.todayIsTraining ? "Heute ist Sprungtag" : "Nächste Einheit")
         let deload: String = Plan.isDeload(s.week) ? " · Entlastung" : ""
+        let hello: String = (s.name.isEmpty ? "" : "Hi \(s.name) · ") + (store.data.gym.isEmpty ? "" : "\(store.data.gym) · ")
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Woche \(s.week) von 12 · \(Plan.phases[Plan.phase(s.week)].name)\(deload)")
+                    Text("\(hello)Woche \(s.week) von 12 · \(Plan.phases[Plan.phase(s.week)].name)\(deload)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.accent)
                     Text(title).font(.largeTitle.bold())
@@ -129,12 +224,17 @@ struct Overview: View {
                 }
                 WeekCard(s: s)
                 NextCard(s: s)
-                JumpSummaryCard(s: s)
+                SingleCard()
+                GoalCard(s: s, showJump: $showJump)
             }
             .padding()
         }
-        .background(Color(.systemGroupedBackground))
+        .background(Theme.bg)
         .navigationBarHidden(true)
+        .sheet(isPresented: $showJump) {
+            QuickJumpSheet()
+                .presentationDetents([.medium])
+        }
     }
 }
 
@@ -153,6 +253,11 @@ struct WeekCard: View {
                     Text(s.done >= s.planned ? "Alles erledigt. Erholung gehört zum Plan." : "Noch \(s.planned - s.done) offen")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    if s.streak > 0 {
+                        Label("\(s.streak) Woche\(s.streak == 1 ? "" : "n") in Serie", systemImage: "flame.fill")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
                 }
                 Spacer()
                 ProgressRing(done: s.done, planned: s.planned)
@@ -194,7 +299,8 @@ struct NextCard: View {
 
     var body: some View {
         let name: String = Plan.sessionDefs[s.nextKey]?.name ?? ""
-        let mins = Plan.estMinutes(key: s.nextKey, week: s.week, compact: store.data.compact)
+        let o = store.data.opts
+        let mins = Plan.estMinutes(key: s.nextKey, week: s.week, opts: o)
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -204,515 +310,180 @@ struct NextCard: View {
                     Text(name).font(.title2.bold())
                 }
                 Spacer()
-                Pill(text: "ca. \(mins) Min.")
+                Menu {
+                    ForEach([30, 45, 60, 75, 90, 120, 150, 180], id: \.self) { m in
+                        Button("\(m) Min.") { store.data.sessionMin = m }
+                    }
+                } label: {
+                    Label("\(store.data.sessionMin) Min.", systemImage: "clock")
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Theme.field).clipShape(Capsule())
+                }
             }
-            RxList(key: s.nextKey, week: s.week, compact: store.data.compact)
+            RxList(key: s.nextKey, week: s.week, opts: o)
             PrimaryButton(title: "Training starten") { store.start(s.nextKey) }
         }
         .card()
     }
 }
 
-struct JumpSummaryCard: View {
+struct GoalCard: View {
     let s: Summary
+    @Binding var showJump: Bool
 
     var body: some View {
-        if let best = s.best {
-            let gain = s.gain ?? 0
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Bester Sprung").font(.subheadline).foregroundStyle(.secondary)
-                    Text("\(Store.fmt(best)) cm").font(.system(size: 40, weight: .bold, design: .rounded))
-                }
-                Spacer()
-                VStack(alignment: .trailing) {
-                    Text("Seit Start").font(.subheadline).foregroundStyle(.secondary)
-                    Text("\(gain >= 0 ? "+" : "")\(Store.fmt(gain)) cm")
-                        .font(.system(size: 40, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.green)
-                }
-            }
-            .card()
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Starthöhe messen").font(.title3.bold())
-                Text("Trage im Tab Sprung deinen ersten Test ein, damit du deinen Fortschritt siehst.")
-                    .foregroundStyle(.secondary)
-            }
-            .card()
-        }
-    }
-}
-
-// MARK: - Training
-
-struct WorkoutView: View {
-    @EnvironmentObject var store: Store
-    @State private var restEnd: Date? = nil
-    @State private var confirmCancel = false
-    @State private var alertMsg: String? = nil
-    @State private var showWarm = false
-
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    header
-                    DisclosureGroup("Aufwärmen (ca. 8 Min.)", isExpanded: $showWarm) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(Plan.warmup, id: \.self) { line in
-                                Text("• " + line)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 6)
+        VStack(alignment: .leading, spacing: 12) {
+            if let best = s.best {
+                let gain = s.gain ?? 0
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Bester Sprung").font(.subheadline).foregroundStyle(.secondary)
+                        Text("\(Store.fmt(best)) cm").font(.system(size: 40, weight: .bold, design: .rounded))
                     }
-                    .card()
-                    ForEach(0..<(store.workout?.ex.count ?? 0), id: \.self) { i in
-                        ExerciseCard(i: i, restEnd: $restEnd)
+                    Spacer()
+                    VStack(alignment: .trailing) {
+                        Text("Seit Start").font(.subheadline).foregroundStyle(.secondary)
+                        Text("\(gain >= 0 ? "+" : "")\(Store.fmt(gain)) cm")
+                            .font(.system(size: 40, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.green)
                     }
-                    PrimaryButton(title: "Einheit abschließen") { finish() }
-                    Button("Abbrechen", role: .destructive) { confirmCancel = true }
-                        .frame(maxWidth: .infinity)
                 }
-                .padding()
-                .padding(.bottom, restEnd == nil ? 0 : 80)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            if let end = restEnd {
-                RestBar(end: end, restEnd: $restEnd)
-            }
-        }
-        .background(Color(.systemGroupedBackground))
-        .navigationBarHidden(true)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Fertig") {
-                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                }
-            }
-        }
-        .confirmationDialog("Einheit verwerfen? Eingaben gehen verloren.", isPresented: $confirmCancel, titleVisibility: .visible) {
-            Button("Verwerfen", role: .destructive) { store.workout = nil }
-        }
-        .alert("Hinweis", isPresented: Binding(get: { alertMsg != nil }, set: { if !$0 { alertMsg = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(alertMsg ?? "")
-        }
-    }
-
-    var header: some View {
-        let w = store.workout
-        let name: String = Plan.sessionDefs[w?.key ?? ""]?.name ?? "Training"
-        return VStack(alignment: .leading, spacing: 2) {
-            TimelineView(.periodic(from: .now, by: 30)) { ctx in
-                let mins = Int(ctx.date.timeIntervalSince(w?.start ?? ctx.date) / 60)
-                Text("Woche \(w?.week ?? 1) · \(mins) Min.")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.accent)
-            }
-            Text(name).font(.largeTitle.bold())
-        }
-    }
-
-    func finish() {
-        if store.finishWorkout() {
-            restEnd = nil
-        } else {
-            alertMsg = "Hake mindestens einen Satz ab."
-        }
-    }
-}
-
-struct RestBar: View {
-    let end: Date
-    @Binding var restEnd: Date?
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
-            let left = Int(end.timeIntervalSince(ctx.date).rounded())
-            let a = abs(left)
-            let sign: String = left < 0 ? "+" : ""
-            let secText = String(format: "%02d", a % 60)
-            HStack(spacing: 10) {
-                Text("Pause").font(.footnote).opacity(0.7)
-                Text("\(sign)\(a / 60):\(secText)")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(left <= 0 ? Theme.accent : Color.white)
-                Spacer()
-                Button("−15") { restEnd = end.addingTimeInterval(-15) }
-                Button("+15") { restEnd = end.addingTimeInterval(15) }
-                Button("Weiter") { restEnd = nil }
-            }
-            .buttonStyle(.bordered)
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.black.opacity(0.9))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
-        }
-    }
-}
-
-struct ExerciseCard: View {
-    @EnvironmentObject var store: Store
-    let i: Int
-    @Binding var restEnd: Date?
-
-    var body: some View {
-        if let w = store.workout, i < w.ex.count,
-           let x = Catalog.ex[w.ex[i].id],
-           let r = Plan.rx(w.ex[i].id, week: w.week, compact: store.data.compact) {
-            content(w.ex[i], x, r)
-        }
-    }
-
-    func content(_ e: ActiveEx, _ x: Exercise, _ r: RxDef) -> some View {
-        let note: String = r.note.isEmpty ? "" : " · " + r.note
-        return VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(x.name).font(.title3.bold())
-                Text("\(r.sets) × \(r.reps) · Pause \(r.rest) Sek.\(note)")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                if let h = store.hint(for: e.id, rx: r) {
-                    Text(h).font(.footnote).foregroundStyle(Theme.accent)
-                }
-            }
-            ForEach(0..<e.sets.count, id: \.self) { j in
-                setRow(j, x, r, e.sets[j])
-            }
-        }
-        .card()
-    }
-
-    func setRow(_ j: Int, _ x: Exercise, _ r: RxDef, _ s: ActiveSet) -> some View {
-        HStack(spacing: 8) {
-            Text("\(j + 1)")
-                .font(.title3.bold())
-                .foregroundStyle(.secondary)
-                .frame(width: 26)
-            if !x.unit.isEmpty {
-                numField(x.unit, Binding(
-                    get: { store.workout?.ex[i].sets[j].kg ?? "" },
-                    set: { store.workout?.ex[i].sets[j].kg = $0 }
-                ), decimal: true)
-            }
-            numField("Wdh.", Binding(
-                get: { store.workout?.ex[i].sets[j].reps ?? "" },
-                set: { store.workout?.ex[i].sets[j].reps = $0 }
-            ), decimal: false)
-            Button {
-                toggle(j, rest: r.rest)
-            } label: {
-                Image(systemName: s.done ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 34))
-                    .foregroundStyle(s.done ? Color.green : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Satz \(j + 1) erledigt")
-        }
-    }
-
-    func numField(_ unit: String, _ b: Binding<String>, decimal: Bool) -> some View {
-        TextField("", text: b)
-            .keyboardType(decimal ? .decimalPad : .numberPad)
-            .multilineTextAlignment(.center)
-            .font(.title3.weight(.semibold).monospacedDigit())
-            .padding(.vertical, 10)
-            .padding(.horizontal, 6)
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(alignment: .topTrailing) {
-                Text(unit)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .padding(.trailing, 6)
-                    .padding(.top, 2)
-            }
-    }
-
-    func toggle(_ j: Int, rest: Int) {
-        store.workout?.ex[i].sets[j].done.toggle()
-        let nowDone = store.workout?.ex[i].sets[j].done ?? false
-        if nowDone {
-            restEnd = Date().addingTimeInterval(Double(rest))
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        } else {
-            restEnd = nil
-        }
-    }
-}
-
-// MARK: - Plan
-
-struct PlanView: View {
-    @EnvironmentObject var store: Store
-
-    var body: some View {
-        let s = store.data.summary()
-        let keys = Plan.keys(forDays: store.data.days.count)
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(0..<3, id: \.self) { i in
-                        phaseCard(i, s.week)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Entlastungswochen").font(.title3.bold())
-                        Text("In Woche 4, 8 und 12 machst du einen Satz weniger pro Übung. So erholt sich dein Körper und die Sprünge werden stärker.")
+                if s.goal > 0 {
+                    let frac: Double = min(1.0, max(0.0, best / s.goal))
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: frac).tint(Theme.accent)
+                        Text(best >= s.goal ? "Ziel von \(Store.fmt(s.goal)) cm erreicht" : "Noch \(Store.fmt(s.goal - best)) cm bis zu deinen \(Store.fmt(s.goal)) cm")
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    .card()
-                    Text("Woche \(s.week): deine Einheiten").font(.title2.bold())
-                    ForEach(0..<keys.count, id: \.self) { idx in
-                        sessionCard(idx, keys[idx], s.week)
-                    }
                 }
-                .padding()
+            } else {
+                Text("Starthöhe messen").font(.title3.bold())
+                Text("Trage deinen ersten Sprungtest ein, damit du deinen Fortschritt siehst.")
+                    .foregroundStyle(.secondary)
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Plan")
-        }
-    }
-
-    func phaseCard(_ i: Int, _ week: Int) -> some View {
-        let p = Plan.phases[i]
-        let active = Plan.phase(week) == i
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(p.name).font(.title3.bold())
-                Spacer()
-                Pill(text: p.weeks)
-            }
-            Text(p.text).foregroundStyle(.secondary)
-        }
-        .card()
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(active ? Theme.accent : Color.clear, lineWidth: 2))
-    }
-
-    func sessionCard(_ idx: Int, _ key: String, _ week: Int) -> some View {
-        let name: String = Plan.sessionDefs[key]?.name ?? ""
-        let mins = Plan.estMinutes(key: key, week: week, compact: store.data.compact)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(idx + 1). \(name)").font(.title3.bold())
-                Spacer()
-                Pill(text: "ca. \(mins) Min.")
-            }
-            RxList(key: key, week: week, compact: store.data.compact)
+            SecondaryButton(title: "Sprung eintragen") { showJump = true }
         }
         .card()
     }
 }
 
-// MARK: - Sprungtest
-
-struct JumpView: View {
+struct QuickJumpSheet: View {
     @EnvironmentObject var store: Store
+    @Environment(\.dismiss) var dismiss
     @State private var date = Date()
     @State private var cmText = ""
     @State private var error: String? = nil
 
     var body: some View {
-        let desc = store.data.jumps.sorted { $0.date > $1.date }
         NavigationStack {
             Form {
-                Section("Neuer Test") {
-                    DatePicker("Datum", selection: $date, displayedComponents: .date)
-                    TextField("Sprunghöhe in cm", text: $cmText).keyboardType(.decimalPad)
-                    if let e = error { Text(e).foregroundStyle(.red).font(.footnote) }
-                    Button("Eintragen") { add() }
-                }
-                Section("Verlauf") { chart }
-                if !desc.isEmpty {
-                    Section("Alle Tests") {
-                        ForEach(desc) { j in
-                            HStack {
-                                Text(j.date, style: .date)
-                                Spacer()
-                                Text("\(Store.fmt(j.cm)) cm").bold()
-                            }
-                        }
-                        .onDelete { offsets in
-                            var ids = Set<UUID>()
-                            for o in offsets { ids.insert(desc[o].id) }
-                            store.data.jumps.removeAll { ids.contains($0.id) }
-                        }
-                    }
-                }
-                Section("So misst du richtig") {
-                    Text("Stelle dich seitlich an eine Wand. Greife mit der Hand so hoch wie möglich und mache eine Markierung. Springe dann aus dem Stand mit Armschwung und markiere den höchsten Punkt. Der Abstand ist deine Sprunghöhe. Teste ausgeruht, nach dem Aufwärmen, mit 3 Versuchen. Zähle den besten.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                DatePicker("Datum", selection: $date, displayedComponents: .date)
+                TextField("Sprunghöhe in cm", text: $cmText).keyboardType(.decimalPad)
+                if let e = error { Text(e).foregroundStyle(.red).font(.footnote) }
             }
-            .navigationTitle("Sprungtest")
+            .navigationTitle("Sprung eintragen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Speichern") { save() } }
+            }
         }
     }
 
-    @ViewBuilder
-    var chart: some View {
-        let asc = store.data.jumps.sorted { $0.date < $1.date }
-        if asc.count < 2 {
-            Text("Ab zwei Tests siehst du hier deine Kurve.").foregroundStyle(.secondary)
-        } else {
-            let lo: Double = (asc.map { $0.cm }.min() ?? 0) - 2
-            let hi: Double = (asc.map { $0.cm }.max() ?? 0) + 2
-            Chart(asc) { j in
-                LineMark(x: .value("Datum", j.date), y: .value("cm", j.cm))
-                    .foregroundStyle(Theme.accent)
-                PointMark(x: .value("Datum", j.date), y: .value("cm", j.cm))
-                    .foregroundStyle(Theme.accent)
-            }
-            .chartYScale(domain: lo...hi)
-            .frame(height: 180)
-        }
-    }
-
-    func add() {
+    func save() {
         let cm = Store.num(cmText)
         if cm < 10 || cm > 150 {
             error = "Gib eine Höhe zwischen 10 und 150 cm ein."
             return
         }
-        error = nil
-        store.data.jumps.append(JumpLog(id: UUID(), date: date, cm: (cm * 10).rounded() / 10))
-        cmText = ""
+        store.addJump(date: date, cm: cm)
+        dismiss()
     }
 }
 
-// MARK: - Übungen
 
-struct ExercisesView: View {
+// MARK: - Einzeltraining
+
+struct SingleCard: View {
+    @State private var show = false
     var body: some View {
-        NavigationStack {
-            List {
-                Section("Technik") {
-                    ForEach(Catalog.order, id: \.self) { id in
-                        if let x = Catalog.ex[id] {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(x.name).font(.headline)
-                                Text(x.cue).font(.subheadline).foregroundStyle(.secondary)
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
-                }
-                Section("Grundregeln für hohe Sprünge") {
-                    Text("Schlaf: 7 bis 9 Stunden. Hier passiert die Anpassung.")
-                    Text("Eiweiß: ca. 1,6 bis 2 g pro kg Körpergewicht am Tag.")
-                    Text("Sprünge nur frisch: Zuerst springen, dann Kraft. Nie müde maximal springen.")
-                    Text("Schmerz (nicht Muskelkater): Pause machen und die Übung ersetzen.")
-                    Text("Keine medizinische Beratung. Bei Beschwerden ärztlich abklären.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("Übungen")
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Einzeltraining", systemImage: "bolt.fill").font(.headline)
+            Text("Nur für heute: wähle Schwerpunkt und Dauer, die App baut dir eine komplette Einheit.")
+                .font(.subheadline).foregroundStyle(.secondary)
+            SecondaryButton(title: "Einheit zusammenstellen") { show = true }
         }
+        .card()
+        .sheet(isPresented: $show) { SingleSessionSheet().presentationDetents([.large]) }
     }
 }
 
-// MARK: - Optionen
-
-struct SettingsView: View {
+struct SingleSessionSheet: View {
     @EnvironmentObject var store: Store
-    @State private var confirmRestart = false
-    @State private var confirmWipe = false
+    @Environment(\.dismiss) var dismiss
+    @State private var focus = "full"
+    @State private var minutes = 90
 
-    private let order: [Int] = [2, 3, 4, 5, 6, 7, 1]
-    private let names: [String] = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+    func optsFor(_ m: Int) -> Opts {
+        var o = store.data.opts
+        o.minutes = m
+        return o
+    }
 
     var body: some View {
+        let s = store.data.summary()
+        let o = optsFor(minutes)
+        let ids = Plan.custom(focus: focus, minutes: minutes, week: s.week, opts: o)
+        let est = Plan.estMinutes(ids: ids, week: s.week, opts: o)
         NavigationStack {
-            Form {
-                Section {
-                    HStack(spacing: 6) {
-                        ForEach(0..<7, id: \.self) { i in
-                            chip(i)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Schwerpunkt").font(.headline)
+                    ForEach(Plan.focuses, id: \.id) { f in
+                        Button { focus = f.id } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(f.name).font(.subheadline.weight(.semibold))
+                                    Text(f.detail).font(.footnote).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: focus == f.id ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(focus == f.id ? Theme.accent : Color.secondary)
+                            }
+                            .foregroundStyle(.primary)
+                            .padding(12)
+                            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
                         }
                     }
-                    Text("\(store.data.days.count) Einheit\(store.data.days.count == 1 ? "" : "en") pro Woche. Wähle 1 bis 4 Tage.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } header: {
-                    Text("Trainingstage")
-                }
-
-                Section {
-                    Toggle("Kompakt-Modus", isOn: $store.data.compact)
-                } footer: {
-                    Text("Weniger Zubehör und kürzere Pausen. Spart ca. 10 Minuten pro Einheit.")
-                }
-
-                Section {
-                    Toggle("Erinnerung am Trainingstag", isOn: $store.data.remind)
-                    if store.data.remind {
-                        Picker("Uhrzeit", selection: $store.data.remindHour) {
-                            ForEach(6..<23, id: \.self) { h in
-                                Text("\(h):00 Uhr").tag(h)
+                    Text("Dauer: \(minutes) Min.").font(.headline)
+                    Slider(value: Binding(get: { Double(minutes) }, set: { minutes = Int(($0 / 15).rounded()) * 15 }), in: 30...180, step: 15)
+                    Text("\(ids.count) Übungen · ca. \(est) Min.").font(.footnote).foregroundStyle(.secondary)
+                    VStack(spacing: 0) {
+                        ForEach(ids, id: \.self) { id in
+                            if let x = Catalog.ex[id], let r = Plan.anyRx(id, week: s.week, opts: o) {
+                                HStack {
+                                    Text(x.name)
+                                    Spacer()
+                                    Text("\(r.sets) × \(r.reps)").fontWeight(.semibold).monospacedDigit()
+                                }
+                                .padding(.vertical, 8)
+                                Divider()
                             }
                         }
                     }
-                } header: {
-                    Text("Erinnerung")
-                }
-
-                Section {
-                    Button("Programm neu starten (Woche 1)") { confirmRestart = true }
-                    ShareLink(item: store.exportJSON()) {
-                        Label("Sicherung teilen", systemImage: "square.and.arrow.up")
+                    PrimaryButton(title: "Los geht's") {
+                        dismiss()
+                        store.startCustom(focus: focus, minutes: minutes)
                     }
-                    Button("Alle Daten löschen", role: .destructive) { confirmWipe = true }
-                } header: {
-                    Text("Programm und Daten")
                 }
+                .padding()
             }
-            .navigationTitle("Optionen")
-            .onChange(of: store.data.days) { _, _ in applyReminder() }
-            .onChange(of: store.data.remind) { _, _ in applyReminder() }
-            .onChange(of: store.data.remindHour) { _, _ in applyReminder() }
-            .confirmationDialog("Programm bei Woche 1 neu starten? Deine Protokolle bleiben erhalten.", isPresented: $confirmRestart, titleVisibility: .visible) {
-                Button("Neu starten") { store.data.start = Date() }
-            }
-            .confirmationDialog("Wirklich alle Daten löschen?", isPresented: $confirmWipe, titleVisibility: .visible) {
-                Button("Alles löschen", role: .destructive) {
-                    store.workout = nil
-                    store.data = AppData.fresh()
-                }
-            }
+            .background(Theme.bg.ignoresSafeArea())
+            .navigationTitle("Einzeltraining")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Schließen") { dismiss() } } }
         }
-    }
-
-    func chip(_ i: Int) -> some View {
-        let d = order[i]
-        let on = store.data.days.contains(d)
-        return Text(names[i])
-            .font(.subheadline.weight(.semibold))
-            .frame(maxWidth: .infinity)
-            .frame(height: 40)
-            .background(on ? Theme.accent : Color(.tertiarySystemFill))
-            .foregroundStyle(on ? Color.white : Color.primary)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .onTapGesture { toggleDay(d) }
-            .accessibilityAddTraits(.isButton)
-    }
-
-    func toggleDay(_ d: Int) {
-        if let idx = store.data.days.firstIndex(of: d) {
-            if store.data.days.count > 1 { store.data.days.remove(at: idx) }
-        } else if store.data.days.count < 4 {
-            store.data.days.append(d)
-        }
-    }
-
-    func applyReminder() {
-        Reminder.apply(enabled: store.data.remind, days: store.data.days, hour: store.data.remindHour)
     }
 }
